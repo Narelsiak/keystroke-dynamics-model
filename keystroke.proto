@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package keystroke;
+
+// Reprezentacja pojedynczej próby (wypłaszczonej)
+message Attempt {
+  repeated float features = 1;  // cechy wypłaszczone jako lista floatów
+}
+
+message TrainRequest {
+  repeated Attempt attempts = 1;
+}
+
+message TrainResponse {
+  string message = 1;
+}
+
+message PredictRequest {
+  repeated Attempt attempts = 1;
+  float threshold = 2;
+}
+
+message PredictResult {
+  bool is_yours = 1;
+  float confidence = 2;
+  float mse = 3;
+}
+
+message PredictResponse {
+  repeated PredictResult results = 1;
+}
+
+service KeystrokeService {
+  rpc Train (TrainRequest) returns (TrainResponse);
+  rpc Predict (PredictRequest) returns (PredictResponse);
+}
