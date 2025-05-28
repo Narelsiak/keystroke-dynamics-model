@@ -2,34 +2,53 @@ syntax = "proto3";
 
 package keystroke;
 
-// Reprezentacja pojedynczej próby (wypłaszczonej)
-message Attempt {
-  repeated float features = 1;  // cechy wypłaszczone jako lista floatów
+// Pojedyncze naciśnięcie klawisza
+message KeyPress {
+  string value = 1;          // np. "D", "u", "1", "!"
+  int32 pressDuration = 2;   // czas trzymania klawisza (ms)
+  int32 waitDuration = 3;    // czas od poprzedniego klawisza (ms, może być ujemny)
+
+  // Modyfikatory
+  bool shift = 4;
+  bool ctrl = 5;
+  bool alt = 6;
+  bool meta = 7;
 }
 
+// Jedna próba: sekwencja klawiszy
+message Attempt {
+  repeated KeyPress keyPresses = 1;
+}
+
+// Żądanie treningu
 message TrainRequest {
   repeated Attempt attempts = 1;
 }
 
+// Odpowiedź po treningu
 message TrainResponse {
   string message = 1;
 }
 
+// Żądanie predykcji
 message PredictRequest {
   repeated Attempt attempts = 1;
   float threshold = 2;
 }
 
+// Wynik pojedynczej predykcji
 message PredictResult {
   bool is_yours = 1;
   float confidence = 2;
   float mse = 3;
 }
 
+// Odpowiedź na predykcję
 message PredictResponse {
   repeated PredictResult results = 1;
 }
 
+// Definicja serwisu
 service KeystrokeService {
   rpc Train (TrainRequest) returns (TrainResponse);
   rpc Predict (PredictRequest) returns (PredictResponse);

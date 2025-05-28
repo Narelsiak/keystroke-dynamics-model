@@ -34,11 +34,8 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         return model
 
     def Train(self, request, context):
-        print('xD')
-        # Odczytanie danych z request
         attempts = request.attempts
-        if not attempts:
-            return keystroke_pb2.TrainResponse(message="No attempts provided")
+        print(f"Received {len(attempts)} attempts for training") # Użyj len() dla listy
 
         # Zamiana na macierz numpy
         X = np.array([attempt.features for attempt in attempts])
