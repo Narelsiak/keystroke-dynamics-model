@@ -26,3 +26,9 @@ def save_model_and_scaler(email: str, model, scaler) -> None:
 
     return unique_id
 
+def count_models_for_user(email: str, base_dir: str = "models") -> int:
+    user_dir = os.path.join(base_dir, safe_email_dir(email))
+    if not os.path.exists(user_dir):
+        return 0
+    model_files = [f for f in os.listdir(user_dir) if f.endswith('.keras')]
+    return len(model_files)

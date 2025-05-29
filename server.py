@@ -12,7 +12,7 @@ import keystroke_pb2
 import keystroke_pb2_grpc
 
 from utils.data import flatten_attempts_press_wait_only, augment_with_noise
-from utils.utils import save_model_and_scaler
+from utils.utils import save_model_and_scaler, count_models_for_user
 
 class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
     def __init__(self):
@@ -80,6 +80,11 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         )
 
 
+    def GetModelCount(self, request, context):
+        email = request.email
+        count = count_models_for_user(email)
+        return keystroke_pb2.ModelCountResponse(count=count)
+    
     def Predict(self, request, context):
         if self.autoencoder is None or self.scaler is None:
             context.set_code(grpc.StatusCode.FAILED_PRECONDITION)

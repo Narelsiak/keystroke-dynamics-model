@@ -36,6 +36,18 @@ message TrainResponse {
   string id = 3;
 }
 
+//train end
+message ModelCountRequest {
+  string email = 1;
+}
+
+message ModelCountResponse {
+  int32 count = 1;
+}
+// model count end
+
+
 service KeystrokeService {
   rpc Train (TrainRequest) returns (TrainResponse);
+  rpc GetModelCount (ModelCountRequest) returns (ModelCountResponse);
 }
