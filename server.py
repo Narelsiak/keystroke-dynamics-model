@@ -11,6 +11,9 @@ from tensorflow.keras.callbacks import EarlyStopping
 import keystroke_pb2
 import keystroke_pb2_grpc
 
+from utils.data import flatten_attempts_press_wait_only, augment_with_noise
+from utils.utils import save_model_and_scaler
+
 class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
     def __init__(self):
         self.scaler = None
@@ -34,29 +37,46 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         return model
 
     def Train(self, request, context):
-        attempts = request.attempts
-        print(f"Received {len(attempts)} attempts for training") # Użyj len() dla listy
+        X = flatten_attempts_press_wait_only(request.attempts)
 
         # Zamiana na macierz numpy
-        X = np.array([attempt.features for attempt in attempts])
-        
+        X = np.array(X)
+        X_augmented = augment_with_noise(X, noise_level=0.05, count=3)
+
         # Skalowanie
         self.scaler = StandardScaler()
-        X_scaled = self.scaler.fit_transform(X)
+        X_scaled = self.scaler.fit_transform(X_augmented)
 
         # Budowa i trenowanie autoenkodera
         self.autoencoder = self.build_autoencoder(X_scaled.shape[1])
-        #early_stop = EarlyStopping(monitor="loss", patience=10, restore_best_weights=True)
-        history = self.autoencoder.fit(X_scaled, X_scaled, epochs=100, shuffle=True, verbose=0)#callbacks=[early_stop])
 
+        history = self.autoencoder.fit(
+            X_scaled, X_scaled,
+            epochs=100,
+            shuffle=True,
+            verbose=0
+        )
+
+        # Statystyki strat
         losses = history.history['loss']
         final_loss = losses[-1]
         min_loss = min(losses)
         max_loss = max(losses)
         avg_loss = sum(losses) / len(losses)
+        std_loss = np.std(losses)
+        unique_id = save_model_and_scaler(request.email, self.autoencoder, self.scaler)
 
         return keystroke_pb2.TrainResponse(
-            message=f"Model trained on {len(X_scaled)} attempts. Final loss: {final_loss:.6f}, min: {min_loss:.6f}, avg: {avg_loss:.6f}"
+            message="Model trained successfully.",
+            stats=keystroke_pb2.TrainStats(
+                samples=len(X_scaled),
+                final_loss=final_loss,
+                min_loss=min_loss,
+                max_loss=max_loss,
+                avg_loss=avg_loss,
+                std_loss=std_loss,
+            ),
+            id=unique_id
         )
 
 
@@ -91,7 +111,13 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
 
         return keystroke_pb2.PredictResponse(results=results)
 
-
+class LoggingInterceptor(grpc.ServerInterceptor):
+    def intercept_service(self, continuation, handler_call_details):
+        def log_and_call(request, context):
+            print("Interceptor got request:", request)
+            return continuation(handler_call_details).unary_unary(request, context)
+        return grpc.unary_unary_rpc_method_handler(log_and_call)
+        
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     keystroke_pb2_grpc.add_KeystrokeServiceServicer_to_server(KeystrokeServiceServicer(), server)
