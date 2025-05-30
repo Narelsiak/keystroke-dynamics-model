@@ -14,11 +14,11 @@ message KeyPress {
 
 message TrainStats {
   int32 samples = 1;
-  float final_loss = 2;
-  float min_loss = 3;
-  float max_loss = 4;
-  float avg_loss = 5;
-  float std_loss = 6;
+  float finalLoss = 2;
+  float minLoss = 3;
+  float maxLoss = 4;
+  float avgLoss = 5;
+  float stdLoss = 6;
 }
 
 message Attempt {

@@ -70,11 +70,11 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
             message="Model trained successfully.",
             stats=keystroke_pb2.TrainStats(
                 samples=len(X_scaled),
-                final_loss=final_loss,
-                min_loss=min_loss,
-                max_loss=max_loss,
-                avg_loss=avg_loss,
-                std_loss=std_loss,
+                finalLoss=final_loss,
+                minLoss=min_loss,
+                maxLoss=max_loss,
+                avgLoss=avg_loss,
+                stdLoss=std_loss,
             ),
             id=unique_id
         )
