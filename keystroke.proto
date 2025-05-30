@@ -59,15 +59,10 @@ message DeleteModelResponse {
 //delete end
 message EvaluateStats {
   int32 samples = 1;
-  float finalLoss = 2;
-  float minLoss = 3;
-  float maxLoss = 4;
-  float avgLoss = 5;
-  float stdLoss = 6;
-  float pressAvg = 7;
-  float pressStd = 8;
-  float waitAvg = 9;
-  float waitStd = 10;
+  float pressAvg = 2;
+  float pressStd = 3;
+  float waitAvg = 4;
+  float waitStd = 5;
 }
 
 message EvaluationAttempt {

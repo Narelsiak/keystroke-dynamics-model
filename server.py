@@ -21,7 +21,6 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
 
     def build_autoencoder(self, input_dim):
         model = Sequential([
-            
             Dense(256, activation='relu', input_shape=(input_dim,)),
             Dropout(0.3),
             Dense(128, activation='relu'),
@@ -66,6 +65,7 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         std_loss = np.std(losses)
         unique_id = save_model_and_scaler(request.email, self.autoencoder, self.scaler)
 
+        print("CIPA")
         return keystroke_pb2.TrainResponse(
             message="Model trained successfully.",
             stats=keystroke_pb2.TrainStats(
@@ -93,50 +93,113 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         return keystroke_pb2.DeleteModelResponse(success=success, message="Model deleted successfully." if success else "Model not found or could not be deleted.")
     
     def Evaluate(self, request, context):
-        all_press_durations = []
-        all_wait_durations = []
+        all_press_durations_global = []
+        all_wait_durations_global = []
 
-        for attempt in request.attempts:
-            for kp in attempt.keyPresses:
-                all_press_durations.append(kp.pressDuration)
-                all_wait_durations.append(kp.waitDuration)
+        if request.attempts:
+            for attempt in request.attempts:
+                for kp in attempt.keyPresses:
+                    all_press_durations_global.append(kp.pressDuration)
 
-        def compute_stats(data):
+                    all_wait_durations_global.append(kp.waitDuration)
+
+        def compute_stats(data, label=""):
             arr = np.array(data)
+            print(f"DEBUG compute_stats for '{label}': array={arr}, size={arr.size}")
+            if not arr.size:
+                return {"avg": 0.0, "std": 0.0, "samples": 0}
+            
             return {
-                "avg": float(arr.mean()) if arr.size else 0.0,
-                "std": float(arr.std()) if arr.size else 0.0
+                "avg": float(arr.mean()),
+                "std": float(arr.std()),
+                "samples": int(arr.size)
             }
 
-        press_stats = compute_stats(all_press_durations)
-        wait_stats = compute_stats(all_wait_durations)
+        global_press_stats = compute_stats(all_press_durations_global, "global_press")
+        global_wait_stats = compute_stats(all_wait_durations_global, "global_wait")
+
+        max_keypresses = 0
+        if request.attempts:
+            attempt_lengths = [len(attempt.keyPresses) for attempt in request.attempts if attempt.keyPresses]
+            if attempt_lengths:
+                max_keypresses = max(attempt_lengths)
+        
+        press_stats_by_position = []
+        wait_stats_by_position = []
+
+        if max_keypresses > 0:
+            press_durations_by_position = [[] for _ in range(max_keypresses)]
+            wait_durations_by_position = [[] for _ in range(max_keypresses)]
+
+            for attempt in request.attempts:
+                for i, kp in enumerate(attempt.keyPresses):
+                    if i < max_keypresses:
+                        press_durations_by_position[i].append(kp.pressDuration)
+                        wait_durations_by_position[i].append(kp.waitDuration)
+            
+            for i, durations_at_pos in enumerate(press_durations_by_position):
+                press_stats_by_position.append(compute_stats(durations_at_pos, f"press_pos_{i+1}"))
+
+            for i, durations_at_pos in enumerate(wait_durations_by_position):
+                wait_stats_by_position.append(compute_stats(durations_at_pos, f"wait_pos_{i+1}"))
 
         results = []
         overall_anomalies = []
+        epsilon = 1e-6
 
-        for attempt in request.attempts:
+        for attempt_idx, attempt in enumerate(request.attempts):
             local_anomalies = []
-            for kp in attempt.keyPresses:
-                if abs(kp.pressDuration - press_stats["avg"]) > 2 * press_stats["std"]:
-                    local_anomalies.append(
-                        f"Key '{kp.value}' has unusual press duration: {kp.pressDuration}ms"
-                    )
-                if abs(kp.waitDuration - wait_stats["avg"]) > 2 * wait_stats["std"]:
-                    local_anomalies.append(
-                        f"Key '{kp.value}' has unusual wait duration: {kp.waitDuration}ms"
-                    )
+            
+            if not press_stats_by_position or not attempt.keyPresses:
+                message_text = "Normal"
+                if not attempt.keyPresses:
+                    message_text = "Normal (no keypresses in attempt)"
+                elif not press_stats_by_position and len(request.attempts) <=1 :
+                     message_text = "Normal (insufficient data for per-position anomaly detection; single attempt)"
+                elif not press_stats_by_position :
+                     message_text = "Normal (insufficient data for per-position anomaly detection)"
 
-            is_anomalous = len(local_anomalies) > 0
-            score = 0.0 if is_anomalous else 1.0
+
+                is_anomalous = False # Domyślnie nie jest anomalią, jeśli nie można ocenić
+                score = 1.0
+            else:
+                for kp_idx, kp in enumerate(attempt.keyPresses):
+                    if kp_idx < len(press_stats_by_position) and kp_idx < len(wait_stats_by_position):
+                        current_press_stats = press_stats_by_position[kp_idx]
+                        current_wait_stats = wait_stats_by_position[kp_idx]
+                        if current_press_stats["samples"] > 1 and current_press_stats["std"] > epsilon:
+                            if abs(kp.pressDuration - current_press_stats["avg"]) > 2 * current_press_stats["std"]:
+                                local_anomalies.append(
+                                    f"Key '{kp.value}' (pos {kp_idx+1}) has unusual press duration: {kp.pressDuration}ms (avg: {current_press_stats['avg']:.1f}, std: {current_press_stats['std']:.1f})"
+                                )
+                        elif current_press_stats["samples"] > 0 and current_press_stats["std"] <= epsilon:
+                            if abs(kp.pressDuration - current_press_stats["avg"]) > epsilon:
+                                local_anomalies.append(
+                                    f"Key '{kp.value}' (pos {kp_idx+1}) has unusual press duration (std~0): {kp.pressDuration}ms (avg: {current_press_stats['avg']:.1f})"
+                                )
+                        
+                        if current_wait_stats["samples"] > 1 and current_wait_stats["std"] > epsilon:
+                            if abs(kp.waitDuration - current_wait_stats["avg"]) > 2 * current_wait_stats["std"]:
+                                local_anomalies.append(
+                                    f"Key '{kp.value}' (pos {kp_idx+1}) has unusual wait duration: {kp.waitDuration}ms (avg: {current_wait_stats['avg']:.1f}, std: {current_wait_stats['std']:.1f})"
+                                )
+                        elif current_wait_stats["samples"] > 0 and current_wait_stats["std"] <= epsilon:
+                            if abs(kp.waitDuration - current_wait_stats["avg"]) > epsilon:
+                                local_anomalies.append(
+                                    f"Key '{kp.value}' (pos {kp_idx+1}) has unusual wait duration (std~0): {kp.waitDuration}ms (avg: {current_wait_stats['avg']:.1f})"
+                                )
+
+                is_anomalous = len(local_anomalies) > 0
+                score = 0.0 if is_anomalous else 1.0
+                message_text = "; ".join(local_anomalies) if local_anomalies else "Normal"
 
             overall_anomalies.extend(local_anomalies)
-
             results.append(
                 keystroke_pb2.EvaluationAttempt(
-                    keyPresses=[kp for kp in attempt.keyPresses],
+                    keyPresses=list(attempt.keyPresses),
                     isAnomalous=is_anomalous,
                     score=score,
-                    message="; ".join(local_anomalies) if local_anomalies else "Normal"
+                    message=message_text
                 )
             )
 
@@ -144,10 +207,10 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
             message="Evaluation complete.",
             stats=keystroke_pb2.EvaluateStats(
                 samples=len(request.attempts),
-                pressAvg=press_stats["avg"],
-                pressStd=press_stats["std"],
-                waitAvg=wait_stats["avg"],
-                waitStd=wait_stats["std"]
+                pressAvg=global_press_stats["avg"],
+                pressStd=global_press_stats["std"],
+                waitAvg=global_wait_stats["avg"],
+                waitStd=global_wait_stats["std"]
             ),
             results=results,
             anomalies=overall_anomalies
