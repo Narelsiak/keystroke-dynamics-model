@@ -12,7 +12,7 @@ import keystroke_pb2
 import keystroke_pb2_grpc
 
 from utils.data import flatten_attempts_press_wait_only, augment_with_noise
-from utils.utils import save_model_and_scaler, count_models_for_user
+from utils.utils import save_model_and_scaler, count_models_for_user, delete_model_and_scaler
 
 class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
     def __init__(self):
@@ -84,6 +84,13 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         email = request.email
         count = count_models_for_user(email)
         return keystroke_pb2.ModelCountResponse(count=count)
+    
+    def DeleteModel(self, request, context):
+        email = request.email
+        model_id = request.modelName  # <-- upewnij się, że to pole to modelName
+
+        success = delete_model_and_scaler(email, model_id)
+        return keystroke_pb2.DeleteModelResponse(success=success, message="Model deleted successfully." if success else "Model not found or could not be deleted.")
     
     def Predict(self, request, context):
         if self.autoencoder is None or self.scaler is None:

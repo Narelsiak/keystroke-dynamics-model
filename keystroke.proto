@@ -46,8 +46,22 @@ message ModelCountResponse {
 }
 // model count end
 
+message DeleteModelRequest {
+  string email = 1;
+  string modelName = 2;
+}
+
+message DeleteModelResponse {
+  string message = 1;
+  bool success = 2;
+}
+
+//delete end
+
+
 
 service KeystrokeService {
   rpc Train (TrainRequest) returns (TrainResponse);
   rpc GetModelCount (ModelCountRequest) returns (ModelCountResponse);
+  rpc DeleteModel(DeleteModelRequest) returns (DeleteModelResponse);
 }
