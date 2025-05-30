@@ -92,6 +92,69 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         success = delete_model_and_scaler(email, model_id)
         return keystroke_pb2.DeleteModelResponse(success=success, message="Model deleted successfully." if success else "Model not found or could not be deleted.")
     
+    def Evaluate(self, request, context):
+        all_press_durations = []
+        all_wait_durations = []
+
+        for attempt in request.attempts:
+            for kp in attempt.keyPresses:
+                all_press_durations.append(kp.pressDuration)
+                all_wait_durations.append(kp.waitDuration)
+
+        def compute_stats(data):
+            arr = np.array(data)
+            return {
+                "avg": float(arr.mean()) if arr.size else 0.0,
+                "std": float(arr.std()) if arr.size else 0.0
+            }
+
+        press_stats = compute_stats(all_press_durations)
+        wait_stats = compute_stats(all_wait_durations)
+
+        results = []
+        overall_anomalies = []
+
+        for attempt in request.attempts:
+            local_anomalies = []
+            for kp in attempt.keyPresses:
+                if abs(kp.pressDuration - press_stats["avg"]) > 2 * press_stats["std"]:
+                    local_anomalies.append(
+                        f"Key '{kp.value}' has unusual press duration: {kp.pressDuration}ms"
+                    )
+                if abs(kp.waitDuration - wait_stats["avg"]) > 2 * wait_stats["std"]:
+                    local_anomalies.append(
+                        f"Key '{kp.value}' has unusual wait duration: {kp.waitDuration}ms"
+                    )
+
+            is_anomalous = len(local_anomalies) > 0
+            score = 0.0 if is_anomalous else 1.0
+
+            overall_anomalies.extend(local_anomalies)
+
+            results.append(
+                keystroke_pb2.EvaluationAttempt(
+                    keyPresses=[kp for kp in attempt.keyPresses],
+                    isAnomalous=is_anomalous,
+                    score=score,
+                    message="; ".join(local_anomalies) if local_anomalies else "Normal"
+                )
+            )
+
+        return keystroke_pb2.EvaluateResponse(
+            message="Evaluation complete.",
+            stats=keystroke_pb2.EvaluateStats(
+                samples=len(request.attempts),
+                pressAvg=press_stats["avg"],
+                pressStd=press_stats["std"],
+                waitAvg=wait_stats["avg"],
+                waitStd=wait_stats["std"]
+            ),
+            results=results,
+            anomalies=overall_anomalies
+        )
+
+
+
     def Predict(self, request, context):
         if self.autoencoder is None or self.scaler is None:
             context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
@@ -122,13 +185,6 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
             results.append(result)
 
         return keystroke_pb2.PredictResponse(results=results)
-
-class LoggingInterceptor(grpc.ServerInterceptor):
-    def intercept_service(self, continuation, handler_call_details):
-        def log_and_call(request, context):
-            print("Interceptor got request:", request)
-            return continuation(handler_call_details).unary_unary(request, context)
-        return grpc.unary_unary_rpc_method_handler(log_and_call)
         
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))

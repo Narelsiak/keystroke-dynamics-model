@@ -57,11 +57,42 @@ message DeleteModelResponse {
 }
 
 //delete end
+message EvaluateStats {
+  int32 samples = 1;
+  float finalLoss = 2;
+  float minLoss = 3;
+  float maxLoss = 4;
+  float avgLoss = 5;
+  float stdLoss = 6;
+  float pressAvg = 7;
+  float pressStd = 8;
+  float waitAvg = 9;
+  float waitStd = 10;
+}
+
+message EvaluationAttempt {
+  repeated KeyPress keyPresses = 1;
+  bool isAnomalous = 2;
+  float score = 3;
+  string message = 4;
+}
+
+message EvaluateRequest {
+  repeated Attempt attempts = 1;
+}
+
+message EvaluateResponse {
+  string message = 1;
+  EvaluateStats stats = 2;
+  repeated EvaluationAttempt results = 3;
+  repeated string anomalies = 4;
+}
 
 
-
+//evaluate data end
 service KeystrokeService {
   rpc Train (TrainRequest) returns (TrainResponse);
   rpc GetModelCount (ModelCountRequest) returns (ModelCountResponse);
   rpc DeleteModel(DeleteModelRequest) returns (DeleteModelResponse);
+  rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
 }
