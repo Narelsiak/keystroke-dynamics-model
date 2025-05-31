@@ -4,20 +4,39 @@ import time
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
+from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
+from urllib.parse import quote_plus
+import os
+import pickle
 
 import keystroke_pb2
 import keystroke_pb2_grpc
 
 from utils.data import flatten_attempts_press_wait_only, augment_with_noise
-from utils.utils import save_model_and_scaler, count_models_for_user, delete_model_and_scaler
+from utils.utils import save_model_and_scaler, count_models_for_user, delete_model_and_scaler, safe_email_dir
 
 class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
     def __init__(self):
         self.scaler = None
         self.autoencoder = None
+        self.model_base_path = "models"
+
+    def load_model_and_scaler(self, email: str, model_name: str):
+
+        model_dir = safe_email_dir(email)
+        scaler_path = os.path.join("models", model_dir, model_name + ".keras")
+        model_path = os.path.join("models", model_dir, model_name + ".h5")
+
+        print(scaler_path, model_path)
+        if not os.path.exists(scaler_path) or not os.path.exists(model_path):
+            raise FileNotFoundError("Model or scaler file not found")
+
+        with open(scaler_path, "rb") as f:
+            self.scaler = pickle.load(f)
+        
+        self.autoencoder = load_model(model_path)
 
     def build_autoencoder(self, input_dim):
         model = Sequential([
@@ -219,17 +238,29 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
 
 
     def Predict(self, request, context):
-        if self.autoencoder is None or self.scaler is None:
+        try:
+            self.load_model_and_scaler(request.email, request.modelName)
+        except Exception as e:
             context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
-            context.set_details('Model not trained yet')
+            context.set_details(str(e))
             return keystroke_pb2.PredictResponse()
+        
+        # Tu używamy progu (threshold) z request, jeśli jest, inaczej domyślnie 3.0
+        threshold = request.threshold if hasattr(request, 'threshold') and request.threshold > 0 else 3.0
 
-        threshold = request.threshold if request.threshold > 0 else 3.0
-        attempts = request.attempts
+        # W proto mamy pojedynczy attempt z keyPresses, więc pakujemy w listę, żeby dalej działać z pętlą
+        attempts = [request.attempt] if request.HasField('attempt') else []
         if not attempts:
             return keystroke_pb2.PredictResponse()
 
-        X = np.array([attempt.features for attempt in attempts])
+        # Zakładamy, że masz funkcję ekstrakcji cech z attempt.keyPresses:
+        # np. każdemu attempt przypisujemy tablicę cech np. length, avg_press, etc.
+        features_list = []
+        for attempt in attempts:
+            features = self.extract_features_from_keypresses(attempt.keyPresses)
+            features_list.append(features)
+
+        X = np.array(features_list)
         X_scaled = self.scaler.transform(X)
         reconstructions = self.autoencoder.predict(X_scaled, verbose=0)
         mse = np.mean(np.square(X_scaled - reconstructions), axis=1)
@@ -242,12 +273,23 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         for i in range(len(attempts)):
             result = keystroke_pb2.PredictResult(
                 is_yours=bool(is_yours[i]),
-                confidence=float(confidence[i]),
-                mse=float(mse[i])
+                confidence=float(confidence[i]),   # tutaj similarity w %
+                mse=float(mse[i])                  # tutaj error
             )
             results.append(result)
 
         return keystroke_pb2.PredictResponse(results=results)
+
+    # Przykładowa funkcja ekstrakcji cech (dopasuj do swojego przypadku)
+    def extract_features_from_keypresses(self, keypresses):
+        # Przykład: konwersja keyPresses do prostego wektora cech
+        durations = [kp.pressDuration for kp in keypresses]
+        waits = [kp.waitDuration for kp in keypresses]
+        # Przykładowe cechy: średnia długość naciśnięcia i średni czas między naciśnięciami
+        avg_press = np.mean(durations) if durations else 0
+        avg_wait = np.mean(waits) if waits else 0
+        return np.array([avg_press, avg_wait])
+
         
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
