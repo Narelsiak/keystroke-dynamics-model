@@ -1,6 +1,7 @@
 import os
 import joblib
 import uuid
+from tensorflow.keras.models import load_model
 
 def safe_email_dir(email: str) -> str:
     return email.replace("@", "_at_").replace(".", "_dot_")
@@ -53,3 +54,22 @@ def delete_model_and_scaler(email: str, model_id: str) -> bool:
         os.remove(scaler_path)
 
     return model_exists and scaler_exists
+def load_user_models(email: str, model_name: str):
+    """
+    Ładuje model (.keras) i scaler (.pkl) dla danego użytkownika.
+    """
+    normalized_email = safe_email_dir(email)
+    base_path = os.path.join("models", normalized_email)
+
+    scaler_path = os.path.join(base_path, f"{model_name}.pkl")
+    model_path = os.path.join(base_path, f"{model_name}.keras")
+
+    try:
+        scaler = joblib.load(scaler_path)
+        model = load_model(model_path)
+        return scaler, model
+
+    except FileNotFoundError:
+        raise Exception(f"Model or scaler not found for user '{email}' and model '{model_name}'")
+    except Exception as e:
+        raise Exception(f"Unexpected error: {e}")

@@ -2,42 +2,19 @@ import grpc
 from concurrent import futures
 import time
 import numpy as np
+from sklearn.base import BaseEstimator
 from sklearn.preprocessing import StandardScaler
 import tensorflow as tf
-from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout
-from tensorflow.keras.callbacks import EarlyStopping
-from urllib.parse import quote_plus
-import os
-import pickle
 
 import keystroke_pb2
 import keystroke_pb2_grpc
 
 from utils.data import flatten_attempts_press_wait_only, augment_with_noise
-from utils.utils import save_model_and_scaler, count_models_for_user, delete_model_and_scaler, safe_email_dir
+from utils.utils import save_model_and_scaler, count_models_for_user, delete_model_and_scaler, load_user_models
 
 class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
-    def __init__(self):
-        self.scaler = None
-        self.autoencoder = None
-        self.model_base_path = "models"
-
-    def load_model_and_scaler(self, email: str, model_name: str):
-
-        model_dir = safe_email_dir(email)
-        scaler_path = os.path.join("models", model_dir, model_name + ".keras")
-        model_path = os.path.join("models", model_dir, model_name + ".h5")
-
-        print(scaler_path, model_path)
-        if not os.path.exists(scaler_path) or not os.path.exists(model_path):
-            raise FileNotFoundError("Model or scaler file not found")
-
-        with open(scaler_path, "rb") as f:
-            self.scaler = pickle.load(f)
-        
-        self.autoencoder = load_model(model_path)
-
     def build_autoencoder(self, input_dim):
         model = Sequential([
             Dense(256, activation='relu', input_shape=(input_dim,)),
@@ -57,15 +34,12 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
     def Train(self, request, context):
         X = flatten_attempts_press_wait_only(request.attempts)
 
-        # Zamiana na macierz numpy
         X = np.array(X)
         X_augmented = augment_with_noise(X, noise_level=0.05, count=3)
 
-        # Skalowanie
         self.scaler = StandardScaler()
         X_scaled = self.scaler.fit_transform(X_augmented)
 
-        # Budowa i trenowanie autoenkodera
         self.autoencoder = self.build_autoencoder(X_scaled.shape[1])
 
         history = self.autoencoder.fit(
@@ -75,7 +49,6 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
             verbose=0
         )
 
-        # Statystyki strat
         losses = history.history['loss']
         final_loss = losses[-1]
         min_loss = min(losses)
@@ -84,7 +57,6 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         std_loss = np.std(losses)
         unique_id = save_model_and_scaler(request.email, self.autoencoder, self.scaler)
 
-        print("CIPA")
         return keystroke_pb2.TrainResponse(
             message="Model trained successfully.",
             stats=keystroke_pb2.TrainStats(
@@ -106,7 +78,7 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
     
     def DeleteModel(self, request, context):
         email = request.email
-        model_id = request.modelName  # <-- upewnij się, że to pole to modelName
+        model_id = request.modelName
 
         success = delete_model_and_scaler(email, model_id)
         return keystroke_pb2.DeleteModelResponse(success=success, message="Model deleted successfully." if success else "Model not found or could not be deleted.")
@@ -179,7 +151,7 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
                      message_text = "Normal (insufficient data for per-position anomaly detection)"
 
 
-                is_anomalous = False # Domyślnie nie jest anomalią, jeśli nie można ocenić
+                is_anomalous = False
                 score = 1.0
             else:
                 for kp_idx, kp in enumerate(attempt.keyPresses):
@@ -239,56 +211,34 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
 
     def Predict(self, request, context):
         try:
-            self.load_model_and_scaler(request.email, request.modelName)
+            scaler, model = load_user_models(request.email, request.modelName)
         except Exception as e:
             context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
             context.set_details(str(e))
             return keystroke_pb2.PredictResponse()
         
-        # Tu używamy progu (threshold) z request, jeśli jest, inaczej domyślnie 3.0
         threshold = request.threshold if hasattr(request, 'threshold') and request.threshold > 0 else 3.0
 
-        # W proto mamy pojedynczy attempt z keyPresses, więc pakujemy w listę, żeby dalej działać z pętlą
         attempts = [request.attempt] if request.HasField('attempt') else []
         if not attempts:
             return keystroke_pb2.PredictResponse()
-
-        # Zakładamy, że masz funkcję ekstrakcji cech z attempt.keyPresses:
-        # np. każdemu attempt przypisujemy tablicę cech np. length, avg_press, etc.
-        features_list = []
-        for attempt in attempts:
-            features = self.extract_features_from_keypresses(attempt.keyPresses)
-            features_list.append(features)
-
-        X = np.array(features_list)
-        X_scaled = self.scaler.transform(X)
-        reconstructions = self.autoencoder.predict(X_scaled, verbose=0)
+        
+        X = flatten_attempts_press_wait_only([request.attempt])
+        print(X)
+        X_scaled = scaler.transform(X)
+        reconstructions = model.predict(X_scaled, verbose=0)
         mse = np.mean(np.square(X_scaled - reconstructions), axis=1)
         max_mse = max(mse.max(), threshold * 2)
         confidence = 100 * (1 - np.log1p(mse) / np.log1p(max_mse))
         confidence = np.clip(confidence, 0, 100)
         is_yours = mse < threshold
 
-        results = []
-        for i in range(len(attempts)):
-            result = keystroke_pb2.PredictResult(
-                is_yours=bool(is_yours[i]),
-                confidence=float(confidence[i]),   # tutaj similarity w %
-                mse=float(mse[i])                  # tutaj error
-            )
-            results.append(result)
 
-        return keystroke_pb2.PredictResponse(results=results)
-
-    # Przykładowa funkcja ekstrakcji cech (dopasuj do swojego przypadku)
-    def extract_features_from_keypresses(self, keypresses):
-        # Przykład: konwersja keyPresses do prostego wektora cech
-        durations = [kp.pressDuration for kp in keypresses]
-        waits = [kp.waitDuration for kp in keypresses]
-        # Przykładowe cechy: średnia długość naciśnięcia i średni czas między naciśnięciami
-        avg_press = np.mean(durations) if durations else 0
-        avg_wait = np.mean(waits) if waits else 0
-        return np.array([avg_press, avg_wait])
+        return keystroke_pb2.PredictResponse(
+            success=bool(is_yours[0]),
+            similarity=float(confidence[0]),
+            error=float(mse[0])
+        )
 
         
 def serve():
