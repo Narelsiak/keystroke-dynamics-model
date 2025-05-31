@@ -1,7 +1,7 @@
 ## Jak to uruchomić
 
 ### Wymagania
-*   Python (3.8+)
+*   Python (3.9 - 3.12)
 *   `pip`
 
 ### Kroki
