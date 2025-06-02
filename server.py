@@ -96,7 +96,6 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
 
         def compute_stats(data, label=""):
             arr = np.array(data)
-            print(f"DEBUG compute_stats for '{label}': array={arr}, size={arr.size}")
             if not arr.size:
                 return {"avg": 0.0, "std": 0.0, "samples": 0}
             
@@ -105,9 +104,6 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
                 "std": float(arr.std()),
                 "samples": int(arr.size)
             }
-
-        global_press_stats = compute_stats(all_press_durations_global, "global_press")
-        global_wait_stats = compute_stats(all_wait_durations_global, "global_wait")
 
         max_keypresses = 0
         if request.attempts:
@@ -182,14 +178,13 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
 
                 is_anomalous = len(local_anomalies) > 0
                 score = 0.0 if is_anomalous else 1.0
-                message_text = "; ".join(local_anomalies) if local_anomalies else "Normal"
+                message_text = local_anomalies if local_anomalies else None
 
             overall_anomalies.extend(local_anomalies)
             results.append(
                 keystroke_pb2.EvaluationAttempt(
-                    keyPresses=list(attempt.keyPresses),
+                    id=request.id[attempt_idx],
                     isAnomalous=is_anomalous,
-                    score=score,
                     message=message_text
                 )
             )
@@ -197,14 +192,16 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         return keystroke_pb2.EvaluateResponse(
             message="Evaluation complete.",
             stats=keystroke_pb2.EvaluateStats(
-                samples=len(request.attempts),
-                pressAvg=global_press_stats["avg"],
-                pressStd=global_press_stats["std"],
-                waitAvg=global_wait_stats["avg"],
-                waitStd=global_wait_stats["std"]
+                pressStats=[
+                    keystroke_pb2.StatEntry(avg=entry["avg"], std=entry["std"])
+                    for entry in press_stats_by_position
+                ],
+                waitStats=[
+                    keystroke_pb2.StatEntry(avg=entry["avg"], std=entry["std"])
+                    for entry in wait_stats_by_position
+                ]
             ),
             results=results,
-            anomalies=overall_anomalies
         )
 
 

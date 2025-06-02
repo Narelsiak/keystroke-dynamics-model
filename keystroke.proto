@@ -57,31 +57,33 @@ message DeleteModelResponse {
 }
 
 //delete end
+message StatEntry {
+  float avg = 1;
+  float std = 2;
+}
+
 message EvaluateStats {
-  int32 samples = 1;
-  float pressAvg = 2;
-  float pressStd = 3;
-  float waitAvg = 4;
-  float waitStd = 5;
+  repeated StatEntry pressStats = 1;
+  repeated StatEntry waitStats = 2;
 }
 
 message EvaluationAttempt {
-  repeated KeyPress keyPresses = 1;
+  int32 id = 1;
   bool isAnomalous = 2;
-  float score = 3;
-  string message = 4;
+  repeated string message = 4;
 }
 
 message EvaluateRequest {
   repeated Attempt attempts = 1;
+  repeated int32 id = 2;
 }
 
 message EvaluateResponse {
   string message = 1;
   EvaluateStats stats = 2;
   repeated EvaluationAttempt results = 3;
-  repeated string anomalies = 4;
 }
+
 //evaluate data end
 
 message PredictRequest {
