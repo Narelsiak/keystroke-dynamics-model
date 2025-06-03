@@ -113,16 +113,20 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         
         press_stats_by_position = []
         wait_stats_by_position = []
+        keys_by_position = []
 
         if max_keypresses > 0:
             press_durations_by_position = [[] for _ in range(max_keypresses)]
             wait_durations_by_position = [[] for _ in range(max_keypresses)]
+            keys_by_position = []
 
             for attempt in request.attempts:
                 for i, kp in enumerate(attempt.keyPresses):
+                    keys_by_position = [kp.value for kp in request.attempts[0].keyPresses]
+
                     if i < max_keypresses:
                         press_durations_by_position[i].append(kp.pressDuration)
-                        wait_durations_by_position[i].append(kp.waitDuration)
+                        wait_durations_by_position[i].append(kp.waitDuration)                        
             
             for i, durations_at_pos in enumerate(press_durations_by_position):
                 press_stats_by_position.append(compute_stats(durations_at_pos, f"press_pos_{i+1}"))
@@ -177,7 +181,6 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
                                 )
 
                 is_anomalous = len(local_anomalies) > 0
-                score = 0.0 if is_anomalous else 1.0
                 message_text = local_anomalies if local_anomalies else None
 
             overall_anomalies.extend(local_anomalies)
@@ -193,16 +196,25 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
             message="Evaluation complete.",
             stats=keystroke_pb2.EvaluateStats(
                 pressStats=[
-                    keystroke_pb2.StatEntry(avg=entry["avg"], std=entry["std"])
-                    for entry in press_stats_by_position
+                    keystroke_pb2.StatEntry(
+                        avg=entry["avg"],
+                        std=entry["std"],
+                        key=keys_by_position[i] if i < len(keys_by_position) else ""
+                    )
+                    for i, entry in enumerate(press_stats_by_position)
                 ],
                 waitStats=[
-                    keystroke_pb2.StatEntry(avg=entry["avg"], std=entry["std"])
-                    for entry in wait_stats_by_position
+                    keystroke_pb2.StatEntry(
+                        avg=entry["avg"],
+                        std=entry["std"],
+                        key=keys_by_position[i] if i < len(keys_by_position) else ""
+                    )
+                    for i, entry in enumerate(wait_stats_by_position)
                 ]
             ),
             results=results,
         )
+
 
 
 
