@@ -225,6 +225,7 @@ class KeystrokeServiceServicer(keystroke_pb2_grpc.KeystrokeServiceServicer):
         X_scaled = scaler.transform(X)
         reconstructions = model.predict(X_scaled, verbose=0)
         mse = np.mean(np.square(X_scaled - reconstructions), axis=1)
+        print(mse)
         max_mse = max(mse.max(), threshold * 2)
         confidence = 100 * (1 - np.log1p(mse) / np.log1p(max_mse))
         confidence = np.clip(confidence, 0, 100)
